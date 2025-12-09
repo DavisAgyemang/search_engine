@@ -5,6 +5,7 @@ from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
 from azure.search.documents.models import VectorizedQuery
 from fastapi import  FastAPI
+from reranker import rerank_list
 from pydantic import BaseModel
 
 load_dotenv()
@@ -35,7 +36,7 @@ class SearchQuery(BaseModel):
 @app.post("/results")
 def ai_search_api(query: SearchQuery):
 
-    query_vector = embed.embed_query(query.query)
+    query_vector = embed.embed_query(query.query.upper())
     vector_query = VectorizedQuery(
         vector=query_vector,
         k_nearest_neighbors=40,  # Increase search window to find enough unique matches
@@ -46,7 +47,7 @@ def ai_search_api(query: SearchQuery):
         search_text=None,
         vector_queries=[vector_query],
         filter=filter_expr,
-        select=["title", "rm_number", "summary", "status"],
+        select=["title", "rm_number", "description", "status"],
         top=40
     )
 
@@ -64,13 +65,9 @@ def ai_search_api(query: SearchQuery):
         # Stop exactly once we have 10 unique documents
         if len(top_results) == query.total_results:
             break
+    new_results = rerank_list(user_query=query.query, results=top_results)
 
-    # 5. Process and print result list
-    print(f"{'Rank':<5} | {'Title':<40} | {'Score':<10}")
-    print("-" * 60)
+    return new_results
 
-    for i, res in enumerate(top_results):
-        # res['@search.score'] will be based on the best chunk found for that title
-        print(f"{i + 1:<5} | {res['title'][:38]:<40} | {res['@search.score']:.4f}")
-
-    return top_results
+#uvicorn ai_search_api:app --reload --host 127.0.0.1 --port 5000
+# curl -X POST "http://127.0.0.1:5000/results"      -H "Content-Type: application/json"      -d '{"query": "AI", "tal_results": 10, "status": "expired"}'

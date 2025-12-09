@@ -4,8 +4,8 @@ import os
 from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
 from azure.search.documents.models import VectorizedQuery
-from fastapi import  FastAPI
-from pydantic import BaseModel
+from reranker import rerank_list
+import pandas as pd
 
 load_dotenv()
 
@@ -27,7 +27,7 @@ def get_top_10_unique_results(query_text, status):
     print(f"\n🔎 Fetching Top 10 Unique Results for: '{query_text}'")
 
     # 1. Vectorize input
-    query_vector = embed.embed_query(query_text)
+    query_vector = embed.embed_query(query_text.upper())
 
     # 2. window expansion: request more than 10 (e.g., 40)
     # This accounts for chunks being duplicates of the same document title.
@@ -43,7 +43,7 @@ def get_top_10_unique_results(query_text, status):
         search_text=None,
         vector_queries=[vector_query],
         filter=filter_expr,
-        select=["title", "rm_number", "summary"],
+        select=["title", "rm_number", "description"],
         top=40
     )
 
@@ -66,11 +66,23 @@ def get_top_10_unique_results(query_text, status):
     # 5. Process and print result list
     print(f"{'Rank':<5} | {'Title':<40} | {'Score':<10}")
     print("-" * 60)
-
-    for i, res in enumerate(top_results):
+    new_results = rerank_list(user_query=query_text, results=top_results)
+    full_result =""
+    for i, res in enumerate(new_results):
         # res['@search.score'] will be based on the best chunk found for that title
         print(f"{i + 1:<5} | {res['title'][:38]:<40} | {res['@search.score']:.4f}")
+        full_result += f"\n {i + 1:<5} | {res['title']}"
+         # Save to csv
 
-    return top_results
+    new_data = {"user_query": [query_text], "search_result": [full_result]}
+    df = pd.DataFrame(new_data)
+    output_file = 'search_result.csv'
+    file_exists = os.path.exists(output_file)
+    df.to_csv("search_result.csv", mode="a", header=not file_exists, index=False)
+
+    return new_results
 # --- Usage Example ---
-results = get_top_10_unique_results("AWS", status="Live")
+# results = get_top_10_unique_results("azure ", status="Live")
+# results = get_top_10_unique_results("machine learning", status="Live")
+# results = get_top_10_unique_results("aws", status="Live")
+results = get_top_10_unique_results("ships", status="Live")
