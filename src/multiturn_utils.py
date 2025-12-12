@@ -1,11 +1,17 @@
 from typing import Any, Iterator, Dict
 from functools import partial, wraps, WRAPPER_ASSIGNMENTS
 from langchain_core.tools import tool
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, BaseMessage, HumanMessage
 from langchain_core.documents.base import Document
 from langgraph.graph import MessagesState, StateGraph, END
+from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.memory import MemorySaver
+from typing import TypedDict, Annotated, List, Any, Iterator, Dict, Union
+
+class AgentState(TypedDict):
+    """The state of the agent, containing the conversation history."""
+    messages: Annotated[List[BaseMessage], add_messages]
 
 def query_or_respond(state: MessagesState, llm: Any, retrieve_tool: Any):
     "Generate tool call for retrieval, or respond directly"
@@ -62,15 +68,17 @@ def generate(state: MessagesState, llm: Any):
 def stream_turn(
     graph,
     user_input: str,
+    config: dict,
     thread_id: str = "abc123",
     stream_mode: str = "values",
+
 ) -> Iterator[Dict[str, Any]]:
     """
     Stream a single user turn through the graph, yielding step values.
 
     Yields the values dicts produced by graph.stream(...).
     """
-    config = {"configurable": {"thread_id": thread_id}}
+    # config = {"configurable": {"thread_id": thread_id}}
     yield from graph.stream(
         {"messages": [{"role": "user", "content": user_input}]},
         stream_mode=stream_mode,
@@ -81,6 +89,7 @@ def answer_once(
     graph,
     user_input: str,
     thread_id: str = "abc123",
+    config: dict = None
 ):
     """
     Run one turn and return both the final AI answer and the retrieved context.
@@ -93,7 +102,7 @@ def answer_once(
     last_ai_content = ""
     final_messages = []
 
-    for step in stream_turn(graph, user_input, thread_id):
+    for step in stream_turn(graph=graph, user_input=user_input, config=config, thread_id=thread_id):
         # in case there have been no messages yet, use `get` to pass a default value (empty list)
         messages = step.get("messages", [])
         if messages:
@@ -155,7 +164,7 @@ def answer_once(
     }
     return response
 
-def build_graph(llm, vector_store):
+def build_graph(llm, vector_store, checkpointer):
     # create a properly decorated tool bound to the vector store
     retrieve_bound = create_bound_retrieve_tool(vector_store)
     
@@ -179,8 +188,8 @@ def build_graph(llm, vector_store):
     graph_builder.add_edge("tools", "generate")
     graph_builder.add_edge("generate", END)
 
-    memory = MemorySaver() # for in-memory state handling
-    graph = graph_builder.compile(checkpointer=memory)
+    # memory = MemorySaver() # for in-memory state handling
+    graph = graph_builder.compile(checkpointer=checkpointer)
     return graph
 
 def format_sources(source_names, CI_docs_URLs):

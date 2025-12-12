@@ -4,12 +4,15 @@ from azure.storage.blob import BlobServiceClient
 from langchain_community.vectorstores.azuresearch import AzureSearch
 from langchain_openai import AzureOpenAIEmbeddings, AzureChatOpenAI
 from src.multiturn_utils import build_graph, answer_once
+from langgraph_checkpoint_cosmosdb import CosmosDBSaver
 import os
 from fastapi import  FastAPI
 import pandas as pd
 import io
 from pydantic import BaseModel
+from markdown_it import MarkdownIt
 
+md = MarkdownIt()
 
 load_dotenv()
 
@@ -37,6 +40,14 @@ llm = AzureChatOpenAI(
     api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
     temperature=0.0
 )
+COSMOS_DB_NAME = os.getenv("COSMOS_DB_NAME")
+COSMOS_CONTAINER_NAME = os.getenv("COSMOS_CONTAINER_NAME")
+
+checkpointer = CosmosDBSaver(
+    database_name=COSMOS_DB_NAME,
+    container_name=COSMOS_CONTAINER_NAME
+)
+
 
 app = FastAPI()
 class SearchQuery(BaseModel):
@@ -68,8 +79,14 @@ def ai_search_api(query: SearchQuery):
 
     # give it to LLM
     if query.user_id not in graphs:
-        graphs[query.user_id] = build_graph(llm=llm, vector_store=vector_store)
+        graphs[query.user_id] = build_graph(llm=llm, vector_store=vector_store, checkpointer=checkpointer)
     graph = graphs[query.user_id]
 
-    response = answer_once(graph, query.query)
+    config = {"configurable": {"thread_id": query.user_id}}
+    # answer_once(graph=graph, user_input=query.query,config=config,thread_id=query.user_id)
+    response = answer_once(graph=graph, user_input=query.query,config=config,thread_id=query.user_id)
+
     return response
+
+
+#  curl -X POST "http://127.0.0.1:5000/results"      -H "Content-Type: application/json"      -d '{"user_id": "abc","query": "what is  1+1"}'
